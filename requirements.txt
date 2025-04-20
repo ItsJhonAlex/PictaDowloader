@@ -4,3 +4,4 @@ yt-dlp
 selenium
 webdriver-manager
 ffmpeg-python
+PyQt5

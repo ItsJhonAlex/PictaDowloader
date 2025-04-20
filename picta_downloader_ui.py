@@ -28,10 +28,11 @@ class DownloaderThread(QThread):
     finished_signal = pyqtSignal(bool, str)
     video_info_signal = pyqtSignal(dict)
     
-    def __init__(self, url, output_dir):
+    def __init__(self, url, output_dir, custom_filename=None):
         super().__init__()
         self.url = url
         self.output_dir = output_dir
+        self.custom_filename = custom_filename
         self.downloader = PictaDownloader()
         self.video_info = None
         self.selected_video = None
@@ -41,6 +42,11 @@ class DownloaderThread(QThread):
         
     def run(self):
         try:
+            # Convert URL from /medias/ to /embed/ format if needed
+            if "/medias/" in self.url:
+                self.url = self.url.replace("/medias/", "/embed/")
+                self.status_signal.emit(f"Convertido URL a formato embed: {self.url}")
+            
             self.status_signal.emit("Configurando navegador...")
             driver = self.downloader.setup_browser()
             
@@ -60,8 +66,16 @@ class DownloaderThread(QThread):
                     time.sleep(0.5)
                 
                 # Crear nombre de archivo seguro
-                safe_title = re.sub(r'[^\w\-_\. ]', '_', self.video_info['title'])
-                self.output_file = os.path.join(self.output_dir, f"{safe_title}.mp4")
+                if self.custom_filename and self.custom_filename.strip():
+                    # Use custom filename if provided
+                    safe_filename = re.sub(r'[^\w\-_\. ]', '_', self.custom_filename.strip())
+                    if not safe_filename.lower().endswith('.mp4'):
+                        safe_filename += '.mp4'
+                    self.output_file = os.path.join(self.output_dir, safe_filename)
+                else:
+                    # Use video title as filename
+                    safe_title = re.sub(r'[^\w\-_\. ]', '_', self.video_info['title'])
+                    self.output_file = os.path.join(self.output_dir, f"{safe_title}.mp4")
                 
                 # Descargar archivos temporales
                 self.status_signal.emit("Descargando video...")
@@ -333,6 +347,11 @@ class PictaDownloaderUI(QMainWindow):
         self.analyze_button.clicked.connect(self.analyze_url)
         url_layout.addWidget(self.analyze_button)
         
+        self.reload_button = QPushButton("Recargar")
+        self.reload_button.clicked.connect(self.reload_url)
+        self.reload_button.setEnabled(False)
+        url_layout.addWidget(self.reload_button)
+        
         url_group.setLayout(url_layout)
         main_layout.addWidget(url_group)
         
@@ -343,6 +362,13 @@ class PictaDownloaderUI(QMainWindow):
         # Título del video
         self.title_label = QLabel("Título: ")
         options_layout.addWidget(self.title_label)
+        
+        # Nombre personalizado para el archivo
+        filename_layout = QHBoxLayout()
+        filename_layout.addWidget(QLabel("Nombre del archivo:"))
+        self.custom_filename_input = QLineEdit()
+        filename_layout.addWidget(self.custom_filename_input)
+        options_layout.addLayout(filename_layout)
         
         # Calidad de video
         quality_layout = QHBoxLayout()
@@ -405,8 +431,8 @@ class PictaDownloaderUI(QMainWindow):
             QMessageBox.warning(self, "Error", "Por favor, introduce una URL válida.")
             return
         
-        if not url.startswith("https://www.picta.cu"):
-            QMessageBox.warning(self, "Error", "La URL debe ser de picta.cu")
+        if not (url.startswith("https://www.picta.cu/medias/") or url.startswith("https://www.picta.cu/embed/")):
+            QMessageBox.warning(self, "Error", "La URL debe ser de picta.cu/medias/ o picta.cu/embed/")
             return
         
         # Deshabilitar botón de análisis
@@ -420,11 +446,19 @@ class PictaDownloaderUI(QMainWindow):
         self.downloader_thread.finished_signal.connect(self.analysis_finished)
         self.downloader_thread.start()
     
+    def reload_url(self):
+        """Recarga la información del video desde la URL actual"""
+        self.analyze_url()  # Reutilizamos el método de análisis
+    
     def update_video_info(self, video_info):
         self.video_info = video_info
         
         # Actualizar título
         self.title_label.setText(f"Título: {video_info['title']}")
+        
+        # Establecer el título como nombre de archivo predeterminado
+        safe_title = re.sub(r'[^\w\-_\. ]', '_', video_info['title'])
+        self.custom_filename_input.setText(safe_title)
         
         # Actualizar opciones de calidad de video
         self.video_quality_combo.clear()
@@ -449,6 +483,7 @@ class PictaDownloaderUI(QMainWindow):
     
     def analysis_finished(self, success, message):
         self.analyze_button.setEnabled(True)
+        self.reload_button.setEnabled(True)  # Habilitar botón de recarga
         if not success:
             QMessageBox.warning(self, "Error", message)
     
@@ -465,19 +500,31 @@ class PictaDownloaderUI(QMainWindow):
             QMessageBox.warning(self, "Error", "Por favor, selecciona una calidad de video.")
             return
         
+        # Get custom filename if provided
+        custom_filename = self.custom_filename_input.text().strip()
+        
+        # Create a new downloader thread with the selected options
+        url = self.url_input.text().strip()
+        self.downloader_thread = DownloaderThread(url, self.output_dir_input.text(), custom_filename)
+        
         # Configurar opciones en el hilo de descarga
         self.downloader_thread.selected_video = self.video_quality_combo.currentData()
         self.downloader_thread.selected_audio = self.audio_track_combo.currentData() if audio_index > 0 else None
         self.downloader_thread.selected_subtitle = self.subtitle_combo.currentData() if subtitle_index > 0 else None
         
+        # Conectar señales
+        self.downloader_thread.status_signal.connect(self.update_status)
+        self.downloader_thread.progress_signal.connect(self.update_progress)
+        self.downloader_thread.finished_signal.connect(self.download_finished)
+        
         # Deshabilitar controles durante la descarga
         self.download_button.setEnabled(False)
         self.options_group.setEnabled(False)
         self.analyze_button.setEnabled(False)
+        self.reload_button.setEnabled(False)
         
-        # Conectar señales adicionales
-        self.downloader_thread.progress_signal.connect(self.update_progress)
-        self.downloader_thread.finished_signal.connect(self.download_finished)
+        # Iniciar descarga
+        self.downloader_thread.start()
     
     def update_status(self, status):
         self.status_text.append(status)
@@ -494,6 +541,7 @@ class PictaDownloaderUI(QMainWindow):
         self.download_button.setEnabled(True)
         self.options_group.setEnabled(True)
         self.analyze_button.setEnabled(True)
+        self.reload_button.setEnabled(True)
         
         if success:
             QMessageBox.information(self, "Éxito", f"Descarga completada: {message}")
