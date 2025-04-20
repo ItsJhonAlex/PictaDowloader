@@ -1,0 +1,6 @@
+requests
+beautifulsoup4
+yt-dlp
+selenium
+webdriver-manager
+ffmpeg-python
