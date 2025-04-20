@@ -2,6 +2,43 @@ import os
 import sys
 import subprocess
 import platform
+import shutil
+
+def check_pyinstaller():
+    """
+    Verifica si PyInstaller está instalado y lo instala si es necesario.
+    
+    Returns:
+        str: Ruta al ejecutable de PyInstaller
+    """
+    # Intentar encontrar PyInstaller en el PATH
+    pyinstaller_path = shutil.which("pyinstaller")
+    
+    if pyinstaller_path:
+        print(f"PyInstaller encontrado en: {pyinstaller_path}")
+        return "pyinstaller"
+    
+    # Si no se encuentra, intentar instalarlo
+    print("PyInstaller no encontrado. Instalando...")
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "install", "pyinstaller"], check=True)
+        print("PyInstaller instalado correctamente.")
+        return "pyinstaller"
+    except subprocess.CalledProcessError:
+        print("Error al instalar PyInstaller. Intentando con ruta absoluta...")
+        
+    # Intentar encontrar la ruta a los scripts de Python
+    scripts_dir = os.path.join(os.path.dirname(sys.executable), "Scripts")
+    pyinstaller_exe = os.path.join(scripts_dir, "pyinstaller.exe")
+    
+    if os.path.exists(pyinstaller_exe):
+        print(f"PyInstaller encontrado en: {pyinstaller_exe}")
+        return pyinstaller_exe
+    
+    # Si todo falla, sugerir instalación manual
+    print("ERROR: No se pudo encontrar ni instalar PyInstaller.")
+    print("Por favor, instálelo manualmente con: pip install pyinstaller")
+    sys.exit(1)
 
 def build_executable():
     """
@@ -10,20 +47,26 @@ def build_executable():
     """
     print("Building Picta Downloader executable...")
     
+    # Verificar PyInstaller
+    pyinstaller_cmd = check_pyinstaller()
+    
     # Detectar el sistema operativo
     current_os = platform.system()
     
     if current_os == "Windows":
-        build_windows_executable()
+        build_windows_executable(pyinstaller_cmd)
     elif current_os == "Linux":
-        build_linux_executable()
+        build_linux_executable(pyinstaller_cmd)
     else:
         print(f"Sistema operativo no soportado: {current_os}")
         sys.exit(1)
 
-def build_windows_executable():
+def build_windows_executable(pyinstaller_cmd):
     """
     Construye el ejecutable para Windows usando PyInstaller.
+    
+    Args:
+        pyinstaller_cmd (str): Comando o ruta para ejecutar PyInstaller
     """
     # Crear archivo spec con la configuración necesaria para PyInstaller
     spec_content = """
@@ -77,14 +120,25 @@ exe = EXE(
         f.write(spec_content)
     
     # Ejecutar PyInstaller con el archivo spec creado
-    subprocess.run(["pyinstaller", "--clean", "picta_downloader.spec"], check=True)
-    
-    print("Build completed successfully!")
-    print("Executable is located in the 'dist' folder.")
+    try:
+        print(f"Ejecutando: {pyinstaller_cmd} --clean picta_downloader.spec")
+        subprocess.run([pyinstaller_cmd, "--clean", "picta_downloader.spec"], check=True)
+        print("Build completed successfully!")
+        print("Executable is located in the 'dist' folder.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error al ejecutar PyInstaller: {e}")
+        sys.exit(1)
+    except FileNotFoundError as e:
+        print(f"Error: No se pudo encontrar PyInstaller. {e}")
+        print("Intente instalar PyInstaller manualmente con: pip install pyinstaller")
+        sys.exit(1)
 
-def build_linux_executable():
+def build_linux_executable(pyinstaller_cmd):
     """
     Construye el ejecutable para Linux y crea un paquete .deb para Linux Mint.
+    
+    Args:
+        pyinstaller_cmd (list): Comando para ejecutar PyInstaller
     """
     print("Construyendo ejecutable para Linux...")
     
@@ -139,7 +193,8 @@ exe = EXE(
         f.write(spec_content)
     
     # Ejecutar PyInstaller para Linux
-    subprocess.run(["pyinstaller", "--clean", "picta_downloader_linux.spec"], check=True)
+    cmd = pyinstaller_cmd + ["--clean", "picta_downloader_linux.spec"]
+    subprocess.run(cmd, check=True)
     
     print("Ejecutable construido correctamente.")
     
